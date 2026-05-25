@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send, Sparkles, Trash2, User, AlertCircle } from 'lucide-react';
+import { Send, Sparkles, Trash2, User, AlertCircle, Terminal } from 'lucide-react';
 import { api } from '../lib/api.js';
 
 const SAMPLE_PROMPTS = [
@@ -19,12 +19,12 @@ function getSessionId() {
 }
 
 export default function Chat() {
-  const [sessionId]            = useState(() => getSessionId());
-  const [messages, setMessages]= useState([]);
-  const [input, setInput]      = useState('');
-  const [sending, setSending]  = useState(false);
-  const [status, setStatus]    = useState({ configured: true, model: 'claude-sonnet-4-6' });
-  const scrollRef              = useRef(null);
+  const [sessionId]             = useState(() => getSessionId());
+  const [messages, setMessages] = useState([]);
+  const [input, setInput]       = useState('');
+  const [sending, setSending]   = useState(false);
+  const [status, setStatus]     = useState({ configured: true, engine: 'claude-code-cli' });
+  const scrollRef               = useRef(null);
 
   useEffect(() => {
     api.chatStatus().then(setStatus).catch(() => {});
@@ -46,10 +46,11 @@ export default function Chat() {
       const res = await api.chatSend(next, sessionId);
       setMessages((m) => [...m, res.message]);
     } catch (err) {
+      const code = err?.body?.code;
       setMessages((m) => [...m, {
         role: 'assistant',
-        content: err?.body?.code === 'NOT_CONFIGURED'
-          ? 'I cannot respond yet - the ANTHROPIC_API_KEY is not configured. See API_KEYS.md.'
+        content: code === 'CLI_UNAVAILABLE'
+          ? '⚠️ Claude Code CLI is not available. Open a terminal and run `claude` to authenticate, then restart the server.'
           : `Error: ${err.message}`,
       }]);
     } finally {
@@ -64,27 +65,38 @@ export default function Chat() {
 
   return (
     <div className="h-[calc(100vh-9rem)] flex flex-col">
+      {/* Header */}
       <div className="flex items-start justify-between gap-4 mb-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
             <Sparkles className="text-gold-500" /> AI Analyst
           </h1>
-          <p className="text-sm text-slate-500">Ask Claude about your data. The assistant has live context on revenue, orders, inventory and platforms.</p>
+          <p className="text-sm text-slate-500">
+            Ask Claude about your data — powered by Claude Code CLI running locally.
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="chip bg-gradient-to-r from-purple-100 to-amber-100 text-slate-700 border border-slate-200">
-            Powered by Claude {status.model}
+          <span className="chip bg-gradient-to-r from-purple-100 to-amber-100 text-slate-700 border border-slate-200 flex items-center gap-1.5">
+            <Terminal size={12} /> Claude Code CLI
           </span>
           <button onClick={clearChat} className="btn-ghost"><Trash2 size={14} /> Clear</button>
         </div>
       </div>
 
+      {/* CLI not found warning */}
       {!status.configured && (
         <div className="card bg-amber-50 border-amber-200 mb-4 flex items-start gap-3">
           <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={18} />
           <div className="text-sm text-amber-800">
-            <strong>Add your ANTHROPIC_API_KEY to .env to enable AI chat.</strong>
-            <div className="mt-1 text-amber-700">Restart `npm run dev` after editing .env. See API_KEYS.md for the setup walkthrough.</div>
+            <strong>Claude Code CLI not detected.</strong>
+            <div className="mt-1 text-amber-700">
+              Install Claude Code at{' '}
+              <a href="https://claude.ai/code" target="_blank" rel="noreferrer" className="underline font-medium">
+                claude.ai/code
+              </a>
+              , then run <code className="bg-amber-100 px-1 rounded">claude</code> in a terminal to
+              authenticate. Restart the server when done.
+            </div>
           </div>
         </div>
       )}
@@ -93,7 +105,11 @@ export default function Chat() {
       {messages.length === 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
           {SAMPLE_PROMPTS.map((p) => (
-            <button key={p} onClick={() => send(p)} className="text-left card hover:border-gold-500 transition text-sm text-slate-700">
+            <button
+              key={p}
+              onClick={() => send(p)}
+              className="text-left card hover:border-gold-500 transition text-sm text-slate-700"
+            >
               {p}
             </button>
           ))}
@@ -108,8 +124,10 @@ export default function Chat() {
             <div>Ask anything about your business data.</div>
           </div>
         )}
-        {messages.map((m, i) => <Bubble key={i} role={m.role} content={m.content} />)}
-        {sending && <Bubble role="assistant" content={<span className="opacity-60">Thinking...</span>} />}
+        {messages.map((m, i) => (
+          <Bubble key={i} role={m.role} content={m.content} />
+        ))}
+        {sending && <Bubble role="assistant" content={<TypingIndicator />} />}
       </div>
 
       {/* Input */}
@@ -118,17 +136,35 @@ export default function Chat() {
         onSubmit={(e) => { e.preventDefault(); send(); }}
       >
         <input
-          className="flex-1 px-4 py-3 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-gold-500"
+          className="flex-1 px-4 py-3 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-gold-500 disabled:opacity-50"
           placeholder="Ask about top products, platform performance, low stock..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={sending || !status.configured}
         />
-        <button type="submit" className="btn-primary px-4 py-3" disabled={sending || !input.trim() || !status.configured}>
+        <button
+          type="submit"
+          className="btn-primary px-4 py-3"
+          disabled={sending || !input.trim() || !status.configured}
+        >
           <Send size={16} /> Send
         </button>
       </form>
     </div>
+  );
+}
+
+function TypingIndicator() {
+  return (
+    <span className="flex gap-1 items-center h-4">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce"
+          style={{ animationDelay: `${i * 150}ms` }}
+        />
+      ))}
+    </span>
   );
 }
 
@@ -137,7 +173,9 @@ function Bubble({ role, content }) {
   return (
     <div className={`flex items-start gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-        isUser ? 'bg-slate-200 text-slate-600' : 'bg-gradient-to-br from-purple-600 to-gold-500 text-white'
+        isUser
+          ? 'bg-slate-200 text-slate-600'
+          : 'bg-gradient-to-br from-purple-600 to-amber-500 text-white'
       }`}>
         {isUser ? <User size={14} /> : <Sparkles size={14} />}
       </div>
