@@ -29,7 +29,7 @@ if (fs.existsSync(rootEnv)) {
 initSchema();
 
 const app  = express();
-const PORT = Number(process.env.PORT) || 5178;
+const PORT = Number(process.env.PORT) || 5179;
 const HOST = process.env.HOST || '0.0.0.0';
 
 const ALLOWED_ORIGINS = (
