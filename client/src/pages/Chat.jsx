@@ -1,217 +1,217 @@
 import { useEffect, useRef, useState } from 'react';
-import { Terminal as TerminalIcon, RefreshCw, Maximize2 } from 'lucide-react';
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import { WebLinksAddon } from '@xterm/addon-web-links';
-import '@xterm/xterm/css/xterm.css';
+import { Send, Sparkles, Trash2, User, RotateCcw } from 'lucide-react';
+import { api } from '../lib/api.js';
 
-const WS_URL = `ws://${window.location.hostname}:3001/ws/terminal`;
+const GREETING = `Hey! 👋 I'm your **Jewelry Authority AI Analyst**. I have live access to your sales data across eBay, Shopify, your website, and Salesforce.
+
+Ask me anything — top sellers, platform comparisons, low inventory alerts, revenue trends, customer insights — I've got you covered.`;
+
+const SAMPLE_PROMPTS = [
+  'What were my top selling items last month?',
+  'Which platform is performing best?',
+  'What products are running low on inventory?',
+  'Compare eBay vs Shopify revenue.',
+];
+
+function getSessionId() {
+  let id = localStorage.getItem('ja_chat_session');
+  if (!id) {
+    id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    localStorage.setItem('ja_chat_session', id);
+  }
+  return id;
+}
 
 export default function Chat() {
-  const mountRef  = useRef(null);   // DOM element xterm mounts into
-  const termRef   = useRef(null);   // { term, fitAddon }
-  const wsRef     = useRef(null);
-  const [status, setStatus] = useState('connecting'); // connecting | ready | error | closed
+  const [sessionId]             = useState(() => getSessionId());
+  const [messages, setMessages] = useState([{ role: 'assistant', content: GREETING }]);
+  const [input, setInput]       = useState('');
+  const [sending, setSending]   = useState(false);
+  const scrollRef               = useRef(null);
 
-  function boot() {
-    // Clean up any previous session
-    if (wsRef.current) {
-      wsRef.current.onclose = null;
-      wsRef.current.close();
-      wsRef.current = null;
+  // Restore history on load (skip if only the local greeting exists)
+  useEffect(() => {
+    api.chatHistory(sessionId).then((r) => {
+      if (r.messages?.length > 0) setMessages(r.messages);
+    }).catch(() => {});
+  }, [sessionId]);
+
+  // Auto-scroll on new messages
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, sending]);
+
+  async function send(text) {
+    const value = (text ?? input).trim();
+    if (!value || sending) return;
+    setInput('');
+
+    const next = [...messages.filter(m => m.role !== 'greeting'), { role: 'user', content: value }];
+    setMessages(next);
+    setSending(true);
+
+    try {
+      const res = await api.chatSend(next, sessionId);
+      setMessages(m => [...m, res.message]);
+    } catch (err) {
+      const code = err?.body?.code;
+      setMessages(m => [...m, {
+        role: 'assistant',
+        content: code === 'CLI_UNAVAILABLE'
+          ? '⚠️ Claude Code CLI is not running. Open a terminal, run `claude`, authenticate, then restart the server.'
+          : `Something went wrong: ${err.message}`,
+      }]);
+    } finally {
+      setSending(false);
     }
-    if (termRef.current) {
-      termRef.current.term.dispose();
-      termRef.current = null;
-    }
-
-    setStatus('connecting');
-
-    // ── xterm setup ────────────────────────────────────────────────────────
-    const term = new Terminal({
-      theme: {
-        background:    '#0F172A',   // deep navy — matches app palette
-        foreground:    '#E2E8F0',
-        cursor:        '#D97706',   // gold cursor
-        cursorAccent:  '#0F172A',
-        selectionBackground: '#334155',
-        black:         '#1E293B',
-        red:           '#F87171',
-        green:         '#34D399',
-        yellow:        '#FBBF24',
-        blue:          '#60A5FA',
-        magenta:       '#A78BFA',
-        cyan:          '#22D3EE',
-        white:         '#E2E8F0',
-        brightBlack:   '#475569',
-        brightRed:     '#FCA5A5',
-        brightGreen:   '#6EE7B7',
-        brightYellow:  '#FDE68A',
-        brightBlue:    '#93C5FD',
-        brightMagenta: '#C4B5FD',
-        brightCyan:    '#67E8F9',
-        brightWhite:   '#F8FAFC',
-      },
-      fontFamily: '"Cascadia Code", "JetBrains Mono", "Fira Code", "Courier New", monospace',
-      fontSize: 14,
-      lineHeight: 1.4,
-      cursorBlink: true,
-      cursorStyle: 'bar',
-      allowProposedApi: true,
-      scrollback: 2000,
-    });
-
-    const fitAddon      = new FitAddon();
-    const webLinksAddon = new WebLinksAddon();
-    term.loadAddon(fitAddon);
-    term.loadAddon(webLinksAddon);
-    term.open(mountRef.current);
-
-    // Small delay so the DOM has laid out before fitting
-    setTimeout(() => fitAddon.fit(), 50);
-
-    termRef.current = { term, fitAddon };
-
-    // ── WebSocket ──────────────────────────────────────────────────────────
-    const ws = new WebSocket(WS_URL);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      term.write('\r\n  \x1b[1;33m◆\x1b[0m  \x1b[1mJewelry Authority — AI Analyst\x1b[0m\r\n');
-      term.write('  \x1b[90mConnecting to Claude Code...\x1b[0m\r\n\r\n');
-      setStatus('connecting');
-    };
-
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'output') {
-          term.write(msg.data);
-          if (status !== 'ready') setStatus('ready');
-        }
-        if (msg.type === 'exit') {
-          term.write('\r\n\x1b[90m[Session ended — click Reconnect to start a new session]\x1b[0m\r\n');
-          setStatus('closed');
-        }
-        if (msg.type === 'error') {
-          term.write(`\r\n\x1b[1;31m✖  ${msg.message}\x1b[0m\r\n`);
-          setStatus('error');
-        }
-      } catch { /* ignore malformed */ }
-    };
-
-    ws.onclose = () => {
-      if (status !== 'closed') {
-        term.write('\r\n\x1b[90m[Connection closed]\x1b[0m\r\n');
-        setStatus('closed');
-      }
-    };
-
-    ws.onerror = () => {
-      term.write('\r\n\x1b[1;31m✖  Could not connect to terminal server. Is the backend running?\x1b[0m\r\n');
-      setStatus('error');
-    };
-
-    // Keyboard input → server
-    term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data }));
-        if (status !== 'ready') setStatus('ready');
-      }
-    });
-
-    // Window resize → fit + notify server
-    function onResize() {
-      fitAddon.fit();
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      }
-    }
-    window.addEventListener('resize', onResize);
-
-    // Return cleanup so React's useEffect can tear down on unmount
-    return () => {
-      window.removeEventListener('resize', onResize);
-      ws.onclose = null;
-      ws.close();
-      term.dispose();
-    };
   }
 
-  // Auto-boot once on mount
-  useEffect(() => {
-    const cleanup = boot();
-    return cleanup;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  async function clearChat() {
+    await api.chatClear(sessionId);
+    setMessages([{ role: 'assistant', content: GREETING }]);
+  }
 
-  const statusLabel = {
-    connecting: { text: 'Connecting…',  dot: 'bg-yellow-400 animate-pulse' },
-    ready:      { text: 'Connected',    dot: 'bg-emerald-400' },
-    error:      { text: 'Error',        dot: 'bg-red-400' },
-    closed:     { text: 'Session ended',dot: 'bg-slate-400' },
-  }[status];
+  const showPrompts = messages.length <= 1;
 
   return (
-    <div className="h-[calc(100vh-9rem)] flex flex-col gap-3">
+    <div className="h-[calc(100vh-9rem)] flex flex-col">
 
-      {/* Header bar */}
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <TerminalIcon className="text-gold-500" size={22} />
+            <Sparkles className="text-gold-500" size={22} />
             AI Analyst
           </h1>
           <p className="text-sm text-slate-500">
-            Claude Code terminal — auto-starts when you open this page.
+            Powered by Claude Code CLI · Ask anything about your business data
           </p>
         </div>
-
-        <div className="flex items-center gap-2">
-          {/* Status indicator */}
-          <span className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
-            <span className={`w-2 h-2 rounded-full ${statusLabel.dot}`} />
-            {statusLabel.text}
-          </span>
-
-          {/* Reconnect button */}
-          <button
-            onClick={() => boot()}
-            className="btn-ghost text-xs"
-            title="Start a new session"
-          >
-            <RefreshCw size={13} /> Reconnect
-          </button>
-
-          {/* Platform badge */}
-          <span className="chip bg-gradient-to-r from-purple-100 to-amber-100 text-slate-700 border border-slate-200 flex items-center gap-1.5 text-xs">
-            <TerminalIcon size={11} /> Claude Code CLI
-          </span>
-        </div>
+        <button onClick={clearChat} className="btn-ghost text-xs">
+          <RotateCcw size={13} /> New chat
+        </button>
       </div>
 
-      {/* Terminal window */}
-      <div
-        className="flex-1 rounded-xl overflow-hidden border border-slate-700 shadow-2xl"
-        style={{ background: '#0F172A', minHeight: 0 }}
+      {/* Message area */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-4 pr-1">
+
+        {messages.map((m, i) => (
+          <Bubble key={i} role={m.role} content={m.content} />
+        ))}
+
+        {/* Typing indicator */}
+        {sending && (
+          <div className="flex items-end gap-2">
+            <Avatar />
+            <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
+              <TypingDots />
+            </div>
+          </div>
+        )}
+
+        {/* Sample prompts — only shown before first user message */}
+        {showPrompts && !sending && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
+            {SAMPLE_PROMPTS.map((p) => (
+              <button
+                key={p}
+                onClick={() => send(p)}
+                className="text-left text-sm text-slate-600 bg-white border border-slate-200 hover:border-gold-400 hover:text-slate-900 rounded-xl px-4 py-3 transition shadow-sm"
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
+
+      </div>
+
+      {/* Input bar */}
+      <form
+        className="mt-3 flex items-center gap-2"
+        onSubmit={(e) => { e.preventDefault(); send(); }}
       >
-        {/* Fake macOS traffic lights for polish */}
-        <div className="flex items-center gap-1.5 px-3 py-2 border-b border-slate-800 bg-slate-900">
-          <span className="w-3 h-3 rounded-full bg-red-500 opacity-80" />
-          <span className="w-3 h-3 rounded-full bg-yellow-400 opacity-80" />
-          <span className="w-3 h-3 rounded-full bg-green-500 opacity-80" />
-          <span className="ml-3 text-xs text-slate-500 font-mono">claude — Jewelry Authority AI Analyst</span>
-          <Maximize2 size={11} className="ml-auto text-slate-600" />
-        </div>
-
-        {/* xterm.js mounts here */}
-        <div
-          ref={mountRef}
-          className="w-full"
-          style={{ height: 'calc(100% - 30px)', padding: '8px 4px 4px' }}
+        <input
+          className="flex-1 px-4 py-3 rounded-xl border border-slate-200 bg-white text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-gold-400 focus:border-transparent placeholder:text-slate-400"
+          placeholder="Ask about sales, inventory, platforms…"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          disabled={sending}
+          autoFocus
         />
-      </div>
+        <button
+          type="submit"
+          className="btn-primary px-4 py-3 rounded-xl"
+          disabled={sending || !input.trim()}
+        >
+          <Send size={15} />
+        </button>
+      </form>
 
+    </div>
+  );
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function Avatar({ user }) {
+  return (
+    <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-sm ${
+      user
+        ? 'bg-slate-700 text-white'
+        : 'bg-gradient-to-br from-violet-600 to-amber-500 text-white'
+    }`}>
+      {user ? <User size={14} /> : <Sparkles size={13} />}
+    </div>
+  );
+}
+
+function Bubble({ role, content }) {
+  const isUser = role === 'user';
+
+  // Render very basic markdown: **bold** and newlines
+  function renderContent(text) {
+    return text.split('\n').map((line, i) => {
+      const parts = line.split(/(\*\*[^*]+\*\*)/g).map((part, j) =>
+        part.startsWith('**') && part.endsWith('**')
+          ? <strong key={j}>{part.slice(2, -2)}</strong>
+          : part
+      );
+      return <span key={i}>{parts}{i < text.split('\n').length - 1 && <br />}</span>;
+    });
+  }
+
+  if (isUser) {
+    return (
+      <div className="flex items-end justify-end gap-2">
+        <div className="max-w-[75%] bg-navy-900 text-white rounded-2xl rounded-br-sm px-4 py-3 text-sm shadow-sm">
+          {content}
+        </div>
+        <Avatar user />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-end gap-2">
+      <Avatar />
+      <div className="max-w-[75%] bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-4 py-3 text-sm text-slate-800 shadow-sm leading-relaxed">
+        {renderContent(content)}
+      </div>
+    </div>
+  );
+}
+
+function TypingDots() {
+  return (
+    <div className="flex gap-1 items-center h-4">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce"
+          style={{ animationDelay: `${i * 150}ms` }}
+        />
+      ))}
     </div>
   );
 }
