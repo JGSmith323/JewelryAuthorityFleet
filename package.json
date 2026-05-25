@@ -1,0 +1,20 @@
+{
+  "name": "jewelry-authority-fleet",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Multi-platform commerce intelligence dashboard unifying eBay, Shopify, business website, and Salesforce.",
+  "scripts": {
+    "dev": "concurrently -n server,client,mcp -c green,cyan,magenta \"npm run dev --prefix server\" \"npm run dev --prefix client\" \"npm run dev --prefix mcp-server\"",
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "dev:mcp": "npm run dev --prefix mcp-server",
+    "build": "npm run build --prefix client",
+    "start": "npm run start --prefix server",
+    "install:all": "npm install && npm install --prefix server && npm install --prefix client && npm install --prefix mcp-server",
+    "setup": "npm run install:all && node server/db/schema.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
