@@ -158,7 +158,6 @@ function runClaudeCLI(prompt) {
 
     proc.on('error', (err) => {
       clearTimeout(timer);
-      // ENOENT means the binary isn't on PATH
       if (err.code === 'ENOENT') {
         reject(new Error('claude CLI not found on PATH. Install Claude Code: https://claude.ai/code'));
       } else {
@@ -166,8 +165,15 @@ function runClaudeCLI(prompt) {
       }
     });
 
-    proc.stdin.write(prompt, 'utf8');
-    proc.stdin.end();
+    // Guard stdin write — process may have already exited on spawn error
+    try {
+      proc.stdin.write(prompt, 'utf8');
+      proc.stdin.end();
+    } catch {
+      clearTimeout(timer);
+      proc.kill();
+      reject(new Error('Failed to write to claude CLI stdin'));
+    }
   });
 }
 
@@ -184,9 +190,13 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'messages[] is required' });
   }
 
-  const snapshot = buildDataSnapshot();
-  const prompt   = buildPrompt(messages, snapshot);
-  const db       = getDb();
+  // Wrap snapshot build so a DB hiccup doesn't produce a raw 500
+  let snapshot = { generated_at: new Date().toISOString() };
+  try { snapshot = buildDataSnapshot(); }
+  catch (e) { console.error('[chat] snapshot error:', e?.message); }
+
+  const prompt = buildPrompt(messages, snapshot);
+  const db     = getDb();
 
   try {
     // Persist user turn (inside try so no orphan on CLI failure)

@@ -15,14 +15,18 @@ export default function Orders() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    if (orders.length === 0) setLoading(true);
     const params = Object.fromEntries(Object.entries(filters).filter(([_, v]) => v));
-    api.orders(params).then((r) => {
-      if (!active) return;
-      setOrders(r.orders);
-      setStats(r.stats || { count: 0, total_value: 0, avg_value: 0, pending_count: 0 });
-    }).finally(() => active && setLoading(false));
+    api.orders(params)
+      .then((r) => {
+        if (!active) return;
+        setOrders(r.orders);
+        setStats(r.stats || { count: 0, total_value: 0, avg_value: 0, pending_count: 0 });
+      })
+      .catch(() => {})
+      .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters, tick]);
 
   return (

@@ -27,23 +27,25 @@ export default function Dashboard() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    (async () => {
-      try {
-        const [rev, ord, prod, cust, platforms, orders] = await Promise.all([
-          api.analyticsRevenue(),
-          api.analyticsOrders(),
-          api.analyticsProducts(),
-          api.analyticsCustomers(),
-          api.platforms(),
-          api.orders({ limit: 10 }),
-        ]);
-        if (active) setData({ rev, ord, prod, cust, platforms: platforms.platforms, orders: orders.orders });
-      } finally {
-        if (active) setLoading(false);
-      }
-    })();
+    // Only show full spinner on first load — demo toggles refresh silently
+    if (!data) setLoading(true);
+    Promise.all([
+      api.analyticsRevenue(),
+      api.analyticsOrders(),
+      api.analyticsProducts(),
+      api.analyticsCustomers(),
+      api.platforms(),
+      api.orders({ limit: 10 }),
+    ]).then(([rev, ord, prod, cust, platforms, orders]) => {
+      if (active) setData({ rev, ord, prod, cust, platforms: platforms.platforms, orders: orders.orders });
+    }).catch(() => {
+      // Keep showing existing data on refetch error; only clear on initial fail
+      if (active && !data) setData(null);
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
     return () => { active = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick]);
 
   if (loading || !data) {

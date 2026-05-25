@@ -102,9 +102,9 @@ router.get('/products', (_req, res) => {
   const counts = db.prepare(`
     SELECT
       COUNT(*) AS total,
-      SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
-      SUM(CASE WHEN status = 'draft'  THEN 1 ELSE 0 END) AS drafts,
-      SUM(CASE WHEN inventory_qty <= 3 AND status = 'active' THEN 1 ELSE 0 END) AS low_stock
+      COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active,
+      COALESCE(SUM(CASE WHEN status = 'draft'  THEN 1 ELSE 0 END), 0) AS drafts,
+      COALESCE(SUM(CASE WHEN inventory_qty <= 3 AND status = 'active' THEN 1 ELSE 0 END), 0) AS low_stock
     FROM products
   `).get();
 

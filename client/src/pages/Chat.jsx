@@ -46,7 +46,9 @@ export default function Chat() {
     if (!value || sending) return;
     setInput('');
 
-    const next = [...messages.filter(m => m.role !== 'greeting'), { role: 'user', content: value }];
+    // Exclude the local greeting from what we send — it's display-only, not real history
+    const history = messages.filter(m => m.content !== GREETING);
+    const next = [...history, { role: 'user', content: value }];
     setMessages(next);
     setSending(true);
 
@@ -67,7 +69,9 @@ export default function Chat() {
   }
 
   async function clearChat() {
-    await api.chatClear(sessionId);
+    try {
+      await api.chatClear(sessionId);
+    } catch { /* server error — still clear locally */ }
     setMessages([{ role: 'assistant', content: GREETING }]);
   }
 

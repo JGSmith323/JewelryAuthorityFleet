@@ -17,10 +17,14 @@ export default function Products() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    if (products.length === 0) setLoading(true);
     const params = Object.fromEntries(Object.entries(filters).filter(([_, v]) => v));
-    api.products(params).then((r) => { if (active) setProducts(r.products); }).finally(() => active && setLoading(false));
+    api.products(params)
+      .then((r) => { if (active) setProducts(r.products); })
+      .catch(() => {})
+      .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters, tick]);
 
   const total = products.length;

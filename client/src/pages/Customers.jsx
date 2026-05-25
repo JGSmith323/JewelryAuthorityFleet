@@ -21,10 +21,14 @@ export default function Customers() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    if (rows.length === 0) setLoading(true);
     const params = Object.fromEntries(Object.entries(filters).filter(([_, v]) => v));
-    api.customers(params).then((r) => { if (active) setRows(r.customers); }).finally(() => active && setLoading(false));
+    api.customers(params)
+      .then((r) => { if (active) setRows(r.customers); })
+      .catch(() => {})
+      .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters, tick]);
 
   return (

@@ -17,7 +17,7 @@ export default function Analytics() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    if (!data) setLoading(true);
     Promise.all([
       api.analyticsRevenue(),
       api.analyticsOrders(),
@@ -25,12 +25,18 @@ export default function Analytics() {
       api.analyticsCustomers(),
     ]).then(([rev, ord, prod, cust]) => {
       if (active) setData({ rev, ord, prod, cust });
+    }).catch(() => {
+      if (active && !data) setData(null);
     }).finally(() => active && setLoading(false));
     return () => { active = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick]);
 
-  if (loading || !data) {
-    return <div className="text-slate-500">Loading analytics...</div>;
+  if (loading && !data) {
+    return <div className="text-slate-500 p-4">Loading analytics...</div>;
+  }
+  if (!data) {
+    return <div className="text-slate-500 p-4">No data yet — enable Demo Mode to populate.</div>;
   }
 
   // ---- pivot helpers ----

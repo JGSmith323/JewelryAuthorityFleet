@@ -19,10 +19,12 @@ export default function Platforms() {
   const [toast, setToast]         = useState(null);
 
   const load = useCallback(async () => {
-    const { platforms } = await api.platforms();
-    setPlatforms(platforms);
-    const logsArr = await Promise.all(platforms.map((p) => api.platformLogs(p.id).then((r) => [p.id, r.logs])));
-    setLogs(Object.fromEntries(logsArr));
+    try {
+      const { platforms } = await api.platforms();
+      setPlatforms(platforms);
+      const logsArr = await Promise.all(platforms.map((p) => api.platformLogs(p.id).then((r) => [p.id, r.logs])));
+      setLogs(Object.fromEntries(logsArr));
+    } catch { /* keep showing existing data on refetch error */ }
   }, []);
 
   useEffect(() => { load(); }, [load, tick]);
@@ -39,7 +41,7 @@ export default function Platforms() {
           : err.message,
       });
     } finally {
-      load();
+      await load();
       setTimeout(() => setToast(null), 4000);
     }
   }
