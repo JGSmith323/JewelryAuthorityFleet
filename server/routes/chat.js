@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { spawn, execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getDb } from '../db/db.js';
 import { isDemoMode } from '../db/seed-demo.js';
@@ -7,26 +7,25 @@ import { isDemoMode } from '../db/seed-demo.js';
 const router = Router();
 const execAsync = promisify(execFile);
 
-// ── PATH augmentation ─────────────────────────────────────────────────────────
-// Node child_process does not inherit the interactive shell PATH.
-// claude is typically installed in ~/.local/bin (Linux/WSL) or /usr/local/bin (mac).
-// We prepend the most common install locations so the binary resolves correctly.
-
+// ── PATH augmentation ──────────────────────────────────────────────────────
 const EXTRA_PATHS = [
   `${process.env.HOME ?? '/root'}/.local/bin`,
   '/usr/local/bin',
-  '/opt/homebrew/bin',           // macOS Apple Silicon
+  '/opt/homebrew/bin',
   '/opt/homebrew/sbin',
   '/usr/bin',
 ].join(':');
 
-const CHILD_ENV = {
-  ...process.env,
-  PATH: `${EXTRA_PATHS}:${process.env.PATH ?? ''}`,
-};
+const CHILD_ENV = (() => {
+  const env = { ...process.env, PATH: `${EXTRA_PATHS}:${process.env.PATH ?? ''}` };
+  const key = env.ANTHROPIC_API_KEY;
+  if (!key || key.startsWith('your_') || key === 'sk-placeholder' || !key.trim()) {
+    delete env.ANTHROPIC_API_KEY;
+  }
+  return env;
+})();
 
-// ── CLI availability check ────────────────────────────────────────────────────
-
+// ── CLI availability check ─────────────────────────────────────────────────
 async function isCliAvailable() {
   try {
     await execAsync('claude', ['--version'], { timeout: 5_000, env: CHILD_ENV });
@@ -36,8 +35,7 @@ async function isCliAvailable() {
   }
 }
 
-// ── Data snapshot for context injection ──────────────────────────────────────
-
+// ── Data snapshot ──────────────────────────────────────────────────────────
 function isoDaysAgo(days) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 }
@@ -95,7 +93,9 @@ function buildDataSnapshot() {
   const demoMode = isDemoMode();
   return {
     generated_at: new Date().toISOString(),
-    data_source: demoMode ? 'DEMO MODE — sample/fictional data for demonstration purposes' : 'LIVE production data',
+    data_source: demoMode
+      ? 'DEMO MODE — sample/fictional data for demonstration purposes'
+      : 'LIVE production data',
     last_30_days: totals30,
     revenue_by_platform_30d: byPlatform30,
     top_products_all_time: topProducts,
@@ -106,13 +106,14 @@ function buildDataSnapshot() {
   };
 }
 
-// ── Prompt builder ────────────────────────────────────────────────────────────
-
+// ── Prompt builder ─────────────────────────────────────────────────────────
 function buildPrompt(messages, snapshot) {
   const isDemo = snapshot?.data_source?.includes('DEMO');
   const system = `You are the Jewelry Authority AI Analyst, embedded in a commerce intelligence dashboard for a jewelry retail business. Answer questions about the business using the data snapshot below.
 
-${isDemo ? '⚠️  IMPORTANT: The dashboard is currently in DEMO MODE. All figures below are fictional sample data for demonstration purposes. Mention this naturally when relevant (e.g. "In the demo data..." or "Based on the sample data...") but do not repeat it on every sentence.' : 'You are working with LIVE production data.'}
+${isDemo
+  ? '⚠️  IMPORTANT: The dashboard is currently in DEMO MODE. All figures below are fictional sample data for demonstration purposes. Mention this naturally when relevant (e.g. "In the demo data..." or "Based on the sample data...") but do not repeat it on every sentence.'
+  : 'You are working with LIVE production data.'}
 
 Rules:
 - Be conversational and helpful — like a smart business analyst, not a robot.
@@ -135,69 +136,21 @@ ${JSON.stringify(snapshot, null, 2)}
   return `${system}\n\n${turns}\n\nAssistant:`;
 }
 
-// ── Claude Code CLI runner ────────────────────────────────────────────────────
+// ── Routes ─────────────────────────────────────────────────────────────────
 
-function runClaudeCLI(prompt) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn('claude', ['--print'], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: CHILD_ENV,
-    });
-
-    const timer = setTimeout(() => {
-      proc.kill('SIGTERM');
-      reject(new Error('Claude CLI timed out after 60 seconds'));
-    }, 60_000);
-
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (c) => { stdout += c.toString(); });
-    proc.stderr.on('data', (c) => { stderr += c.toString(); });
-
-    proc.on('close', (code) => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        reject(new Error(`claude CLI exited ${code}`));
-      } else {
-        resolve(stdout.trim());
-      }
-    });
-
-    proc.on('error', (err) => {
-      clearTimeout(timer);
-      if (err.code === 'ENOENT') {
-        reject(new Error('claude CLI not found on PATH. Install Claude Code: https://claude.ai/code'));
-      } else {
-        reject(err);
-      }
-    });
-
-    // Guard stdin write — process may have already exited on spawn error
-    try {
-      proc.stdin.write(prompt, 'utf8');
-      proc.stdin.end();
-    } catch {
-      clearTimeout(timer);
-      proc.kill();
-      reject(new Error('Failed to write to claude CLI stdin'));
-    }
-  });
-}
-
-// ── Routes ────────────────────────────────────────────────────────────────────
-
+// GET /api/chat/status
 router.get('/status', async (_req, res) => {
   const available = await isCliAvailable();
-  res.json({ configured: available, engine: 'claude-code-cli' });
+  res.json({ configured: available, engine: 'claude-agent-sdk' });
 });
 
+// POST /api/chat — stream claude output directly as plain-text chunked response
 router.post('/', async (req, res) => {
   const { messages, sessionId } = req.body || {};
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'messages[] is required' });
   }
 
-  // Wrap snapshot build so a DB hiccup doesn't produce a raw 500
   let snapshot = { generated_at: new Date().toISOString() };
   try { snapshot = buildDataSnapshot(); }
   catch (e) { console.error('[chat] snapshot error:', e?.message); }
@@ -205,35 +158,99 @@ router.post('/', async (req, res) => {
   const prompt = buildPrompt(messages, snapshot);
   const db     = getDb();
 
-  try {
-    // Persist user turn (inside try so no orphan on CLI failure)
-    if (sessionId) {
-      const last = messages[messages.length - 1];
-      if (last?.role === 'user') {
-        db.prepare(`INSERT INTO chat_messages (role, content, session_id) VALUES (?, ?, ?)`)
-          .run('user', last.content, sessionId);
+  // Persist user turn
+  const last = messages[messages.length - 1];
+  if (sessionId && last?.role === 'user') {
+    db.prepare(`INSERT INTO chat_messages (role, content, session_id) VALUES (?, ?, ?)`)
+      .run('user', last.content, sessionId);
+  }
+
+  // Set streaming headers before spawning
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Transfer-Encoding', 'chunked');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.setHeader('Content-Encoding', 'identity');
+  res.flushHeaders();
+
+  const proc = spawn('claude', ['-p'], { env: CHILD_ENV });
+  // Write prompt via stdin (avoids OS arg-length limits on large data snapshots)
+  proc.stdin.write(prompt);
+  proc.stdin.end();
+
+  let assistantText = '';
+  let finished = false;
+
+  // 90-second hard timeout
+  const timeout = setTimeout(() => {
+    if (!finished) {
+      finished = true;
+      proc.kill();
+      if (!res.writableEnded) {
+        res.write('\n[Response timed out after 90 seconds]');
+        res.end();
       }
     }
+  }, 90_000);
 
-    const text = await runClaudeCLI(prompt);
+  // Kill proc if client disconnects early
+  // Use res 'close' instead of req 'close' — fires only on actual client disconnect
+  res.on('close', () => {
+    if (!finished) {
+      finished = true;
+      clearTimeout(timeout);
+      proc.kill();
+    }
+  });
 
-    if (sessionId) {
-      db.prepare(`INSERT INTO chat_messages (role, content, session_id) VALUES (?, ?, ?)`)
-        .run('assistant', text, sessionId);
+  proc.stdout.on('data', (chunk) => {
+    const text = chunk.toString();
+    assistantText += text;
+    if (!res.writableEnded) res.write(chunk);
+  });
+
+  proc.stderr.on('data', (chunk) => {
+    console.error('[chat:stderr]', chunk.toString());
+  });
+
+  proc.on('close', (code) => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timeout);
+
+    if (code !== 0 && !assistantText) {
+      const msg = `[AI service error — exit code ${code}]`;
+      if (!res.writableEnded) res.write(msg);
+      assistantText = msg;
     }
 
-    res.json({ message: { role: 'assistant', content: text }, engine: 'claude-code-cli' });
-  } catch (err) {
-    console.error('[chat] claude CLI error:', err?.message);
-    res.status(502).json({
-      error: err?.message?.includes('not found')
-        ? 'Claude Code CLI not found. Install it at https://claude.ai/code'
-        : 'Claude Code CLI unavailable. Make sure you are authenticated (`claude` in a terminal).',
-      code: 'CLI_UNAVAILABLE',
-    });
-  }
+    if (!res.writableEnded) res.end();
+
+    // Persist assistant response
+    if (sessionId && assistantText.trim()) {
+      try {
+        db.prepare(`INSERT INTO chat_messages (role, content, session_id) VALUES (?, ?, ?)`)
+          .run('assistant', assistantText.trim(), sessionId);
+      } catch (e) {
+        console.error('[chat] persist assistant error:', e?.message);
+      }
+    }
+  });
+
+  proc.on('error', (err) => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timeout);
+    console.error('[chat] spawn error:', err.message);
+    const msg = `[Failed to start AI service: ${err.message}]`;
+    if (!res.writableEnded) {
+      res.write(msg);
+      res.end();
+    }
+  });
 });
 
+// GET /api/chat/history
 router.get('/history', (req, res) => {
   const { sessionId } = req.query;
   if (!sessionId) return res.json({ messages: [] });
@@ -243,6 +260,7 @@ router.get('/history', (req, res) => {
   res.json({ messages: rows });
 });
 
+// DELETE /api/chat/history
 router.delete('/history', (req, res) => {
   const { sessionId } = req.query;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });

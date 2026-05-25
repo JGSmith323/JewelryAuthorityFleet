@@ -6,8 +6,6 @@ import morgan from 'morgan';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
-import { createServer } from 'node:http';
-import { setupTerminalWS } from './terminal.js';
 
 import { initSchema } from './db/schema.js';
 import productsRoute   from './routes/products.js';
@@ -33,7 +31,7 @@ initSchema();
 const app  = express();
 const PORT = Number(process.env.PORT) || 3001;
 
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173').split(',').map(s => s.trim());
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173').split(',').map(s => s.trim());
 app.use(cors({
   origin: (origin, cb) => {
     // Allow same-origin requests (no origin header) and listed origins
@@ -80,14 +78,8 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'An internal server error occurred. Check server logs for details.' });
 });
 
-// Attach WebSocket terminal server to the same HTTP server as Express
-// so both REST API and /ws/terminal share port 3001.
-const httpServer = createServer(app);
-setupTerminalWS(httpServer);
-
-httpServer.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log(`[server] listening on http://127.0.0.1:${PORT}`);
-  console.log(`[terminal] ws://127.0.0.1:${PORT}/ws/terminal`);
 });
 
 export default app;

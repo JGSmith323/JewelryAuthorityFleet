@@ -25,6 +25,8 @@ function buildGreeting(demoEnabled) {
     : `Hey! 👋 I'm your **Jewelry Authority AI Analyst**.\n\nConnect your platforms and I'll give you live insights across eBay, Shopify, your website, and Salesforce. Or enable **Demo Mode** to explore with sample data.`;
 }
 
+const GREETING_PREFIX = 'Hey! 👋';
+
 export default function Chat() {
   const { enabled: demoEnabled, tick } = useDemo();
   const [sessionId, setSessionId]  = useState(() => getSessionId());
@@ -34,12 +36,12 @@ export default function Chat() {
   const [error, setError]          = useState(null);
   const scrollRef                  = useRef(null);
   const prevTickRef                = useRef(tick);
+  const streamingRef               = useRef('');
 
-  // Update greeting when demo mode changes
+  // Update greeting when demo mode changes (only if no real conversation yet)
   useEffect(() => {
     if (tick !== prevTickRef.current) {
       prevTickRef.current = tick;
-      // Only reset if there's no real conversation (just the greeting)
       setMessages(prev => {
         const hasRealConvo = prev.some(m => m.role === 'user');
         if (hasRealConvo) return prev;
@@ -48,7 +50,7 @@ export default function Chat() {
     }
   }, [tick, demoEnabled]);
 
-  // Restore history on load
+  // Restore session history on load
   useEffect(() => {
     const active = { current: true };
     api.chatHistory(sessionId).then((r) => {
@@ -68,28 +70,49 @@ export default function Chat() {
     if (!value || sending) return;
     setInput('');
     setError(null);
+    streamingRef.current = '';
 
-    // Filter out the local greeting — it's display-only, not stored history
-    const history = messages.filter(m => !m.content?.startsWith('Hey! 👋'));
+    const history = messages.filter(m => !m.content?.startsWith(GREETING_PREFIX));
     const next    = [...history, { role: 'user', content: value }];
-    setMessages(next);
+    // Show user message + empty streaming bubble immediately
+    setMessages([...next, { role: 'assistant', content: '', streaming: true }]);
     setSending(true);
 
     try {
-      const res = await api.chatSend(next, sessionId);
-      setMessages(m => [...m, res.message]);
-    } catch (err) {
-      const code = err?.body?.code;
-      if (code === 'CLI_UNAVAILABLE') {
-        setError('Claude Code CLI is not running. Open a terminal, run `claude` to authenticate, then restart the server.');
-      } else {
-        setError(`Request failed: ${err.message || 'unknown error'}. Try again.`);
+      const res = await api.chatStream(next, sessionId);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value: chunk } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(chunk, { stream: true });
+        streamingRef.current += text;
+        const current = streamingRef.current;
+        setMessages(prev => {
+          const copy = [...prev];
+          const idx = copy.findLastIndex(m => m.streaming);
+          if (idx !== -1) copy[idx] = { ...copy[idx], content: current };
+          return copy;
+        });
+        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
       }
-      // Put the user message back in input so they can retry
+
+      // Finalize bubble
+      const finalText = streamingRef.current;
+      setMessages(prev => {
+        const copy = [...prev];
+        const idx = copy.findLastIndex(m => m.streaming);
+        if (idx !== -1) copy[idx] = { role: 'assistant', content: finalText || '(no response)' };
+        return copy;
+      });
+    } catch (err) {
+      setError(err.message || 'Request failed. Try again.');
+      setMessages(prev => prev.filter(m => !m.streaming));
       setInput(value);
-      setMessages(prev => prev.filter(m => m !== next[next.length - 1]));
     } finally {
       setSending(false);
+      streamingRef.current = '';
     }
   }
 
@@ -100,6 +123,8 @@ export default function Chat() {
     setSessionId(newId);
     setMessages([{ role: 'assistant', content: buildGreeting(demoEnabled) }]);
     setError(null);
+    setInput('');
+    streamingRef.current = '';
   }
 
   const showPrompts = !messages.some(m => m.role === 'user') && !sending;
@@ -141,19 +166,9 @@ export default function Chat() {
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-4 pr-1">
-
         {messages.map((m, i) => (
-          <Bubble key={i} role={m.role} content={m.content} />
+          <Bubble key={i} role={m.role} content={m.content} streaming={m.streaming} />
         ))}
-
-        {sending && (
-          <div className="flex items-end gap-2">
-            <Avatar />
-            <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
-              <TypingDots />
-            </div>
-          </div>
-        )}
 
         {showPrompts && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
@@ -168,7 +183,6 @@ export default function Chat() {
             ))}
           </div>
         )}
-
       </div>
 
       {/* Input */}
@@ -207,7 +221,7 @@ function Avatar({ user }) {
   );
 }
 
-function Bubble({ role, content }) {
+function Bubble({ role, content, streaming }) {
   const isUser = role === 'user';
 
   function renderContent(text) {
@@ -236,8 +250,14 @@ function Bubble({ role, content }) {
   return (
     <div className="flex items-end gap-2">
       <Avatar />
-      <div className="max-w-[75%] bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-4 py-3 text-sm text-slate-800 shadow-sm leading-relaxed">
-        {renderContent(content)}
+      <div className="max-w-[75%] bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-4 py-3 text-sm text-slate-800 shadow-sm leading-relaxed min-h-[2.5rem]">
+        {streaming && !content
+          ? <TypingDots />
+          : renderContent(content)
+        }
+        {streaming && content && (
+          <span className="inline-block w-1.5 h-3.5 bg-slate-400 ml-0.5 animate-pulse rounded-sm align-middle" />
+        )}
       </div>
     </div>
   );

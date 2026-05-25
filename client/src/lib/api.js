@@ -1,4 +1,5 @@
 const BASE = '/api';
+const CHAT_BASE = 'http://127.0.0.1:3001/api';
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
@@ -36,11 +37,22 @@ export const api = {
   analyticsProducts:()              => request('/analytics/products'),
   analyticsCustomers:()             => request('/analytics/customers'),
 
-  chatStatus:       ()              => request('/chat/status'),
-  chatSend:         (messages, sessionId) =>
-    request('/chat', { method: 'POST', body: JSON.stringify({ messages, sessionId }) }),
-  chatHistory:      (sessionId)     => request(`/chat/history?sessionId=${encodeURIComponent(sessionId)}`),
-  chatClear:        (sessionId)     => request(`/chat/history?sessionId=${encodeURIComponent(sessionId)}`, { method: 'DELETE' }),
+  // streaming fetch — returns a ReadableStream response
+  chatStream: async (messages, sessionId) => {
+    const res = await fetch(`${CHAT_BASE}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages, sessionId }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `Server error ${res.status}`);
+    }
+    return res; // caller reads res.body as a ReadableStream
+  },
+  chatHistory: (sessionId) => request(`/chat/history?sessionId=${encodeURIComponent(sessionId)}`),
+  chatClear:   (sessionId) => request(`/chat/history?sessionId=${encodeURIComponent(sessionId)}`, { method: 'DELETE' }),
+  chatStatus:  ()          => request('/chat/status'),
 };
 
 export const PLATFORM_META = {
