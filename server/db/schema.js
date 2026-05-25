@@ -107,12 +107,14 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_orders_platform   ON orders(platform_id);
-CREATE INDEX IF NOT EXISTS idx_orders_status     ON orders(status);
-CREATE INDEX IF NOT EXISTS idx_orders_ordered_at ON orders(ordered_at);
-CREATE INDEX IF NOT EXISTS idx_products_platform ON products(platform_id);
-CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
+CREATE INDEX IF NOT EXISTS idx_orders_platform    ON orders(platform_id);
+CREATE INDEX IF NOT EXISTS idx_orders_status      ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_ordered_at  ON orders(ordered_at);
+CREATE INDEX IF NOT EXISTS idx_orders_customer    ON orders(customer_id);
+CREATE INDEX IF NOT EXISTS idx_products_platform  ON products(platform_id);
+CREATE INDEX IF NOT EXISTS idx_products_category  ON products(category);
 CREATE INDEX IF NOT EXISTS idx_customers_platform ON customers(platform_id);
+CREATE INDEX IF NOT EXISTS idx_customers_ltv      ON customers(lifetime_value DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_session       ON chat_messages(session_id, created_at);
 `;
 

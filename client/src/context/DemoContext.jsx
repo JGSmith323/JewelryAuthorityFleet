@@ -13,8 +13,8 @@ export function DemoProvider({ children }) {
     try {
       const { enabled } = await api.demoStatus();
       setEnabled(!!enabled);
-    } catch (err) {
-      console.error('demo status failed', err);
+    } catch {
+      // Server may not be running yet on first load — fail silently
     } finally {
       setLoading(false);
     }

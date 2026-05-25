@@ -41,9 +41,9 @@ with sample data.
 | `npm run dev`        | Run the server, client, and MCP server concurrently       |
 | `npm run dev:server` | Just the Express API on `:3001`                           |
 | `npm run dev:client` | Just the Vite client on `:5173`                           |
-| `npm run dev:mcp`    | Just the MCP server (stdio)                               |
-| `npm run build`      | Build the production client bundle                        |
-| `npm run start`      | Start the API server in production mode                   |
+| `npm run dev:mcp`    | MCP stdio server (use with Claude Desktop — not part of default `dev`)  |
+| `npm run build`      | Build the production client bundle into `client/dist`     |
+| `npm run start`      | Serve API + built client in production (`NODE_ENV=production`) — run `npm run build` first |
 
 ## Architecture
 

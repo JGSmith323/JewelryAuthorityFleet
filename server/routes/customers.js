@@ -18,7 +18,7 @@ router.get('/', (req, res) => {
     SELECT * FROM customers
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ORDER BY lifetime_value DESC
-    LIMIT ${Number(limit) || 200}
+    LIMIT ${Math.max(1, Math.min(Number(limit) || 200, 1000))}
   `;
   const rows = getDb().prepare(sql).all(params).map((r) => hydrate(r, JSON_COLS));
   res.json({ customers: rows, count: rows.length });

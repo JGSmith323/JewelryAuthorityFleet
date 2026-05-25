@@ -25,7 +25,8 @@ router.get('/revenue', (_req, res) => {
   `).all({ cutoff: isoDaysAgo(365) });
 
   const byCategory = db.prepare(`
-    SELECT p.category AS category, ROUND(SUM(p.price), 2) AS revenue
+    SELECT p.category AS category,
+           ROUND(SUM(json_extract(j.value, '$.price') * json_extract(j.value, '$.qty')), 2) AS revenue
     FROM orders o, json_each(o.items) j
     JOIN products p ON p.id = json_extract(j.value, '$.product_id')
     WHERE o.status NOT IN ('cancelled','refunded')

@@ -20,7 +20,7 @@ router.get('/', (req, res) => {
     SELECT * FROM products
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ORDER BY updated_at DESC
-    LIMIT ${Number(limit) || 200}
+    LIMIT ${Math.max(1, Math.min(Number(limit) || 200, 1000))}
   `;
   const rows = getDb().prepare(sql).all(params).map((r) => hydrate(r, JSON_COLS));
   res.json({ products: rows, count: rows.length });

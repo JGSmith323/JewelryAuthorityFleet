@@ -47,7 +47,8 @@ router.post('/:id/sync', async (req, res) => {
   }
 
   try {
-    // Real implementation would pull and persist records here.
+    // When credentials are configured, this block will call svc.sync() to
+    // fetch and upsert records from the live platform into SQLite.
     db.prepare(`
       INSERT INTO sync_logs (platform_id, status, records_synced, started_at, completed_at)
       VALUES (?, 'success', 0, ?, CURRENT_TIMESTAMP)

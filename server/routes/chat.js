@@ -116,17 +116,17 @@ router.post('/', async (req, res) => {
     .filter((m) => m && m.role && m.content)
     .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content) }));
 
-  // Persist the latest user turn
   const db = getDb();
-  if (sessionId) {
-    const last = apiMessages[apiMessages.length - 1];
-    if (last && last.role === 'user') {
-      db.prepare(`INSERT INTO chat_messages (role, content, session_id) VALUES (?, ?, ?)`)
-        .run('user', last.content, sessionId);
-    }
-  }
 
   try {
+    // Persist the latest user turn inside the try so orphaned rows don't appear on error
+    if (sessionId) {
+      const last = apiMessages[apiMessages.length - 1];
+      if (last && last.role === 'user') {
+        db.prepare(`INSERT INTO chat_messages (role, content, session_id) VALUES (?, ?, ?)`)
+          .run('user', last.content, sessionId);
+      }
+    }
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const completion = await client.messages.create({
       model: MODEL,
@@ -152,10 +152,11 @@ router.post('/', async (req, res) => {
       model: completion.model,
     });
   } catch (err) {
-    console.error('[chat] anthropic error:', err);
+    // Log the safe summary only — SDK errors can contain request headers/metadata
+    console.error('[chat] anthropic error:', err?.status ?? err?.constructor?.name ?? 'unknown', err?.message);
     res.status(502).json({
-      error: 'Anthropic API call failed',
-      detail: err?.message || String(err),
+      error: 'AI service unavailable. Please try again shortly.',
+      code: 'AI_UNAVAILABLE',
     });
   }
 });

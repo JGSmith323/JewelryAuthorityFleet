@@ -31,7 +31,15 @@ initSchema();
 const app  = express();
 const PORT = Number(process.env.PORT) || 3001;
 
-app.use(cors());
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173').split(',').map(s => s.trim());
+app.use(cors({
+  origin: (origin, cb) => {
+    // Allow same-origin requests (no origin header) and listed origins
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    cb(new Error(`CORS: origin ${origin} not allowed`));
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: '2mb' }));
 app.use(morgan('dev'));
 
@@ -48,6 +56,15 @@ app.use('/api/chat',       chatRoute);
 // JSON 404 for unknown /api/*
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
+// Serve the production React build when NODE_ENV=production
+if (process.env.NODE_ENV === 'production') {
+  const distPath = path.resolve(__dirname, '..', 'client', 'dist');
+  if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
+    app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
+  }
+}
+
 // Centralized error handler
 app.use((err, _req, res, _next) => {
   if (err?.code === 'NOT_CONFIGURED') {
@@ -58,7 +75,7 @@ app.use((err, _req, res, _next) => {
     });
   }
   console.error('[error]', err);
-  res.status(500).json({ error: err?.message || 'Internal server error' });
+  res.status(500).json({ error: 'An internal server error occurred. Check server logs for details.' });
 });
 
 app.listen(PORT, () => {

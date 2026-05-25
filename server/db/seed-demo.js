@@ -53,16 +53,15 @@ function generateSKU(category, idx) {
 export function seedDemo() {
   const db = getDb();
 
-  // hard reset of all demo-able rows
-  db.exec(`
-    DELETE FROM sync_logs;
-    DELETE FROM sf_opportunities;
-    DELETE FROM orders;
-    DELETE FROM customers;
-    DELETE FROM products;
-  `);
-
   const txn = db.transaction(() => {
+    // hard reset of all demo-able rows — inside transaction for atomicity
+    db.exec(`
+      DELETE FROM sync_logs;
+      DELETE FROM sf_opportunities;
+      DELETE FROM orders;
+      DELETE FROM customers;
+      DELETE FROM products;
+    `);
     // ---- platforms: mark all as 'demo' ----
     const setPlat = db.prepare(`UPDATE platforms SET status = 'demo', last_sync = CURRENT_TIMESTAMP WHERE id = ?`);
     for (const p of PLATFORMS) setPlat.run(p);
@@ -141,7 +140,7 @@ export function seedDemo() {
         JSON.stringify(rand() < 0.3 ? ['vip'] : []),
         sfId,
       );
-      customerIds.push({ id: info.lastInsertRowid, platform, sfId });
+      customerIds.push({ id: info.lastInsertRowid, platform, sfId, address });
     }
 
     // ---- orders (200, spread across last 12 months) ----
@@ -192,7 +191,7 @@ export function seedDemo() {
         status,
         total, subtotal, shipping, tax, discount,
         JSON.stringify(items),
-        JSON.stringify({ /* placeholder */ }),
+        JSON.stringify(customer.address),
         ordered.toISOString(),
         shipped ? shipped.toISOString() : null,
         delivered ? delivered.toISOString() : null,

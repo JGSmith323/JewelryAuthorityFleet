@@ -23,7 +23,7 @@ router.get('/', (req, res) => {
     LEFT JOIN customers c ON c.id = o.customer_id
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ORDER BY o.ordered_at DESC
-    LIMIT ${Number(limit) || 200}
+    LIMIT ${Math.max(1, Math.min(Number(limit) || 200, 1000))}
   `;
   const rows = getDb().prepare(sql).all(params).map((r) => hydrate(r, JSON_COLS));
 
@@ -33,7 +33,7 @@ router.get('/', (req, res) => {
       COUNT(*) AS count,
       COALESCE(SUM(total_amount), 0) AS total_value,
       COALESCE(AVG(total_amount), 0) AS avg_value,
-      SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count
+      COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_count
     FROM orders o
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
   `;
