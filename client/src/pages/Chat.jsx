@@ -1,191 +1,217 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send, Sparkles, Trash2, User, AlertCircle, Terminal } from 'lucide-react';
-import { api } from '../lib/api.js';
+import { Terminal as TerminalIcon, RefreshCw, Maximize2 } from 'lucide-react';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import '@xterm/xterm/css/xterm.css';
 
-const SAMPLE_PROMPTS = [
-  'What were my top selling items last month?',
-  'Which platform is performing best?',
-  'What products are running low on inventory?',
-  'Compare eBay vs Shopify revenue.',
-];
-
-function getSessionId() {
-  let id = localStorage.getItem('ja_chat_session');
-  if (!id) {
-    id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    localStorage.setItem('ja_chat_session', id);
-  }
-  return id;
-}
+const WS_URL = `ws://${window.location.hostname}:3001/ws/terminal`;
 
 export default function Chat() {
-  const [sessionId]             = useState(() => getSessionId());
-  const [messages, setMessages] = useState([]);
-  const [input, setInput]       = useState('');
-  const [sending, setSending]   = useState(false);
-  const [status, setStatus]     = useState({ configured: true, engine: 'claude-code-cli' });
-  const scrollRef               = useRef(null);
+  const mountRef  = useRef(null);   // DOM element xterm mounts into
+  const termRef   = useRef(null);   // { term, fitAddon }
+  const wsRef     = useRef(null);
+  const [status, setStatus] = useState('connecting'); // connecting | ready | error | closed
 
-  useEffect(() => {
-    api.chatStatus().then(setStatus).catch(() => {});
-    api.chatHistory(sessionId).then((r) => setMessages(r.messages || [])).catch(() => {});
-  }, [sessionId]);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, sending]);
-
-  async function send(text) {
-    const value = (text ?? input).trim();
-    if (!value || sending) return;
-    setInput('');
-    const next = [...messages, { role: 'user', content: value }];
-    setMessages(next);
-    setSending(true);
-    try {
-      const res = await api.chatSend(next, sessionId);
-      setMessages((m) => [...m, res.message]);
-    } catch (err) {
-      const code = err?.body?.code;
-      setMessages((m) => [...m, {
-        role: 'assistant',
-        content: code === 'CLI_UNAVAILABLE'
-          ? '⚠️ Claude Code CLI is not available. Open a terminal and run `claude` to authenticate, then restart the server.'
-          : `Error: ${err.message}`,
-      }]);
-    } finally {
-      setSending(false);
+  function boot() {
+    // Clean up any previous session
+    if (wsRef.current) {
+      wsRef.current.onclose = null;
+      wsRef.current.close();
+      wsRef.current = null;
     }
+    if (termRef.current) {
+      termRef.current.term.dispose();
+      termRef.current = null;
+    }
+
+    setStatus('connecting');
+
+    // ── xterm setup ────────────────────────────────────────────────────────
+    const term = new Terminal({
+      theme: {
+        background:    '#0F172A',   // deep navy — matches app palette
+        foreground:    '#E2E8F0',
+        cursor:        '#D97706',   // gold cursor
+        cursorAccent:  '#0F172A',
+        selectionBackground: '#334155',
+        black:         '#1E293B',
+        red:           '#F87171',
+        green:         '#34D399',
+        yellow:        '#FBBF24',
+        blue:          '#60A5FA',
+        magenta:       '#A78BFA',
+        cyan:          '#22D3EE',
+        white:         '#E2E8F0',
+        brightBlack:   '#475569',
+        brightRed:     '#FCA5A5',
+        brightGreen:   '#6EE7B7',
+        brightYellow:  '#FDE68A',
+        brightBlue:    '#93C5FD',
+        brightMagenta: '#C4B5FD',
+        brightCyan:    '#67E8F9',
+        brightWhite:   '#F8FAFC',
+      },
+      fontFamily: '"Cascadia Code", "JetBrains Mono", "Fira Code", "Courier New", monospace',
+      fontSize: 14,
+      lineHeight: 1.4,
+      cursorBlink: true,
+      cursorStyle: 'bar',
+      allowProposedApi: true,
+      scrollback: 2000,
+    });
+
+    const fitAddon      = new FitAddon();
+    const webLinksAddon = new WebLinksAddon();
+    term.loadAddon(fitAddon);
+    term.loadAddon(webLinksAddon);
+    term.open(mountRef.current);
+
+    // Small delay so the DOM has laid out before fitting
+    setTimeout(() => fitAddon.fit(), 50);
+
+    termRef.current = { term, fitAddon };
+
+    // ── WebSocket ──────────────────────────────────────────────────────────
+    const ws = new WebSocket(WS_URL);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      term.write('\r\n  \x1b[1;33m◆\x1b[0m  \x1b[1mJewelry Authority — AI Analyst\x1b[0m\r\n');
+      term.write('  \x1b[90mConnecting to Claude Code...\x1b[0m\r\n\r\n');
+      setStatus('connecting');
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'output') {
+          term.write(msg.data);
+          if (status !== 'ready') setStatus('ready');
+        }
+        if (msg.type === 'exit') {
+          term.write('\r\n\x1b[90m[Session ended — click Reconnect to start a new session]\x1b[0m\r\n');
+          setStatus('closed');
+        }
+        if (msg.type === 'error') {
+          term.write(`\r\n\x1b[1;31m✖  ${msg.message}\x1b[0m\r\n`);
+          setStatus('error');
+        }
+      } catch { /* ignore malformed */ }
+    };
+
+    ws.onclose = () => {
+      if (status !== 'closed') {
+        term.write('\r\n\x1b[90m[Connection closed]\x1b[0m\r\n');
+        setStatus('closed');
+      }
+    };
+
+    ws.onerror = () => {
+      term.write('\r\n\x1b[1;31m✖  Could not connect to terminal server. Is the backend running?\x1b[0m\r\n');
+      setStatus('error');
+    };
+
+    // Keyboard input → server
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'input', data }));
+        if (status !== 'ready') setStatus('ready');
+      }
+    });
+
+    // Window resize → fit + notify server
+    function onResize() {
+      fitAddon.fit();
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+    }
+    window.addEventListener('resize', onResize);
+
+    // Return cleanup so React's useEffect can tear down on unmount
+    return () => {
+      window.removeEventListener('resize', onResize);
+      ws.onclose = null;
+      ws.close();
+      term.dispose();
+    };
   }
 
-  async function clearChat() {
-    await api.chatClear(sessionId);
-    setMessages([]);
-  }
+  // Auto-boot once on mount
+  useEffect(() => {
+    const cleanup = boot();
+    return cleanup;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const statusLabel = {
+    connecting: { text: 'Connecting…',  dot: 'bg-yellow-400 animate-pulse' },
+    ready:      { text: 'Connected',    dot: 'bg-emerald-400' },
+    error:      { text: 'Error',        dot: 'bg-red-400' },
+    closed:     { text: 'Session ended',dot: 'bg-slate-400' },
+  }[status];
 
   return (
-    <div className="h-[calc(100vh-9rem)] flex flex-col">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-4">
+    <div className="h-[calc(100vh-9rem)] flex flex-col gap-3">
+
+      {/* Header bar */}
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <Sparkles className="text-gold-500" /> AI Analyst
+            <TerminalIcon className="text-gold-500" size={22} />
+            AI Analyst
           </h1>
           <p className="text-sm text-slate-500">
-            Ask Claude about your data — powered by Claude Code CLI running locally.
+            Claude Code terminal — auto-starts when you open this page.
           </p>
         </div>
+
         <div className="flex items-center gap-2">
-          <span className="chip bg-gradient-to-r from-purple-100 to-amber-100 text-slate-700 border border-slate-200 flex items-center gap-1.5">
-            <Terminal size={12} /> Claude Code CLI
+          {/* Status indicator */}
+          <span className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+            <span className={`w-2 h-2 rounded-full ${statusLabel.dot}`} />
+            {statusLabel.text}
           </span>
-          <button onClick={clearChat} className="btn-ghost"><Trash2 size={14} /> Clear</button>
+
+          {/* Reconnect button */}
+          <button
+            onClick={() => boot()}
+            className="btn-ghost text-xs"
+            title="Start a new session"
+          >
+            <RefreshCw size={13} /> Reconnect
+          </button>
+
+          {/* Platform badge */}
+          <span className="chip bg-gradient-to-r from-purple-100 to-amber-100 text-slate-700 border border-slate-200 flex items-center gap-1.5 text-xs">
+            <TerminalIcon size={11} /> Claude Code CLI
+          </span>
         </div>
       </div>
 
-      {/* CLI not found warning */}
-      {!status.configured && (
-        <div className="card bg-amber-50 border-amber-200 mb-4 flex items-start gap-3">
-          <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={18} />
-          <div className="text-sm text-amber-800">
-            <strong>Claude Code CLI not detected.</strong>
-            <div className="mt-1 text-amber-700">
-              Install Claude Code at{' '}
-              <a href="https://claude.ai/code" target="_blank" rel="noreferrer" className="underline font-medium">
-                claude.ai/code
-              </a>
-              , then run <code className="bg-amber-100 px-1 rounded">claude</code> in a terminal to
-              authenticate. Restart the server when done.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Sample prompts */}
-      {messages.length === 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
-          {SAMPLE_PROMPTS.map((p) => (
-            <button
-              key={p}
-              onClick={() => send(p)}
-              className="text-left card hover:border-gold-500 transition text-sm text-slate-700"
-            >
-              {p}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto card p-4 space-y-4">
-        {messages.length === 0 && (
-          <div className="text-center text-slate-500 py-8">
-            <Sparkles size={28} className="mx-auto text-gold-500 mb-2" />
-            <div>Ask anything about your business data.</div>
-          </div>
-        )}
-        {messages.map((m, i) => (
-          <Bubble key={i} role={m.role} content={m.content} />
-        ))}
-        {sending && <Bubble role="assistant" content={<TypingIndicator />} />}
-      </div>
-
-      {/* Input */}
-      <form
-        className="mt-3 flex items-center gap-2"
-        onSubmit={(e) => { e.preventDefault(); send(); }}
+      {/* Terminal window */}
+      <div
+        className="flex-1 rounded-xl overflow-hidden border border-slate-700 shadow-2xl"
+        style={{ background: '#0F172A', minHeight: 0 }}
       >
-        <input
-          className="flex-1 px-4 py-3 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-gold-500 disabled:opacity-50"
-          placeholder="Ask about top products, platform performance, low stock..."
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          disabled={sending || !status.configured}
-        />
-        <button
-          type="submit"
-          className="btn-primary px-4 py-3"
-          disabled={sending || !input.trim() || !status.configured}
-        >
-          <Send size={16} /> Send
-        </button>
-      </form>
-    </div>
-  );
-}
+        {/* Fake macOS traffic lights for polish */}
+        <div className="flex items-center gap-1.5 px-3 py-2 border-b border-slate-800 bg-slate-900">
+          <span className="w-3 h-3 rounded-full bg-red-500 opacity-80" />
+          <span className="w-3 h-3 rounded-full bg-yellow-400 opacity-80" />
+          <span className="w-3 h-3 rounded-full bg-green-500 opacity-80" />
+          <span className="ml-3 text-xs text-slate-500 font-mono">claude — Jewelry Authority AI Analyst</span>
+          <Maximize2 size={11} className="ml-auto text-slate-600" />
+        </div>
 
-function TypingIndicator() {
-  return (
-    <span className="flex gap-1 items-center h-4">
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce"
-          style={{ animationDelay: `${i * 150}ms` }}
+        {/* xterm.js mounts here */}
+        <div
+          ref={mountRef}
+          className="w-full"
+          style={{ height: 'calc(100% - 30px)', padding: '8px 4px 4px' }}
         />
-      ))}
-    </span>
-  );
-}
+      </div>
 
-function Bubble({ role, content }) {
-  const isUser = role === 'user';
-  return (
-    <div className={`flex items-start gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
-      <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-        isUser
-          ? 'bg-slate-200 text-slate-600'
-          : 'bg-gradient-to-br from-purple-600 to-amber-500 text-white'
-      }`}>
-        {isUser ? <User size={14} /> : <Sparkles size={14} />}
-      </div>
-      <div className={`max-w-[80%] px-4 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${
-        isUser
-          ? 'bg-navy-900 text-white rounded-tr-sm'
-          : 'bg-slate-100 text-slate-800 rounded-tl-sm'
-      }`}>
-        {content}
-      </div>
     </div>
   );
 }

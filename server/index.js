@@ -6,6 +6,8 @@ import morgan from 'morgan';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import { createServer } from 'node:http';
+import { setupTerminalWS } from './terminal.js';
 
 import { initSchema } from './db/schema.js';
 import productsRoute   from './routes/products.js';
@@ -78,8 +80,14 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'An internal server error occurred. Check server logs for details.' });
 });
 
-app.listen(PORT, () => {
+// Attach WebSocket terminal server to the same HTTP server as Express
+// so both REST API and /ws/terminal share port 3001.
+const httpServer = createServer(app);
+setupTerminalWS(httpServer);
+
+httpServer.listen(PORT, () => {
   console.log(`[server] listening on http://127.0.0.1:${PORT}`);
+  console.log(`[terminal] ws://127.0.0.1:${PORT}/ws/terminal`);
 });
 
 export default app;
