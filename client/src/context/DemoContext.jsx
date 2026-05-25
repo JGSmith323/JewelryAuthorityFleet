@@ -1,41 +1,43 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 
 const DemoContext = createContext(null);
 
 export function DemoProvider({ children }) {
   const [enabled, setEnabled] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [tick, setTick] = useState(0);
+  const [busy, setBusy]       = useState(false);
+  const [tick, setTick]       = useState(0);
+  const busyRef               = useRef(false); // guard against double-clicks
 
-  const refresh = useCallback(async () => {
-    try {
-      const { enabled } = await api.demoStatus();
-      setEnabled(!!enabled);
-    } catch {
-      // Server may not be running yet on first load — fail silently
-    } finally {
-      setLoading(false);
-    }
+  // Fetch true state from server on mount (silent — no disabled flash)
+  useEffect(() => {
+    api.demoStatus()
+      .then(({ enabled }) => setEnabled(!!enabled))
+      .catch(() => {}); // server may not be up yet
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
-
   const toggle = useCallback(async () => {
+    if (busyRef.current) return; // hard guard
+    busyRef.current = true;
     setBusy(true);
+
+    const next = !enabled;
+    setEnabled(next); // optimistic — UI flips instantly
+
     try {
-      if (enabled) await api.demoDisable();
-      else         await api.demoEnable();
-      await refresh();
-      setTick((t) => t + 1); // tell consumers to refetch
+      if (next) await api.demoEnable();
+      else      await api.demoDisable();
+      setTick((t) => t + 1); // signal all pages to refetch
+    } catch {
+      setEnabled(!next); // roll back on error
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
-  }, [enabled, refresh]);
+  }, [enabled]);
 
   return (
-    <DemoContext.Provider value={{ enabled, loading, busy, toggle, refresh, tick }}>
+    <DemoContext.Provider value={{ enabled, busy, toggle, tick }}>
       {children}
     </DemoContext.Provider>
   );
