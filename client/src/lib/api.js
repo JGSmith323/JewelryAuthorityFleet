@@ -1,5 +1,7 @@
 const BASE = '/api';
-const CHAT_BASE = 'http://127.0.0.1:3001/api';
+// In dev, bypass Vite proxy for streaming (avoids proxy buffering).
+// In production, the app is served from the same Express server — use relative URL.
+const CHAT_BASE = import.meta.env.DEV ? 'http://127.0.0.1:3001/api' : '/api';
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {

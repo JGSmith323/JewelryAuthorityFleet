@@ -29,13 +29,20 @@ if (fs.existsSync(rootEnv)) {
 initSchema();
 
 const app  = express();
-const PORT = Number(process.env.PORT) || 3001;
+const PORT = Number(process.env.PORT) || 5178;
+const HOST = process.env.HOST || '0.0.0.0';
 
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173').split(',').map(s => s.trim());
+const ALLOWED_ORIGINS = (
+  process.env.ALLOWED_ORIGINS ||
+  'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5178,http://127.0.0.1:5178'
+).split(',').map(s => s.trim());
+
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow same-origin requests (no origin header) and listed origins
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    // Allow same-origin, listed origins, and Tailscale MagicDNS hosts
+    if (!origin || ALLOWED_ORIGINS.includes(origin) || /\.ts\.net(:\d+)?$/.test(origin)) {
+      return cb(null, true);
+    }
     cb(new Error(`CORS: origin ${origin} not allowed`));
   },
   credentials: true,
@@ -56,13 +63,15 @@ app.use('/api/chat',       chatRoute);
 // JSON 404 for unknown /api/*
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
-// Serve the production React build when NODE_ENV=production
-if (process.env.NODE_ENV === 'production') {
-  const distPath = path.resolve(__dirname, '..', 'client', 'dist');
-  if (fs.existsSync(distPath)) {
-    app.use(express.static(distPath));
-    app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
-  }
+// Serve the production React build (always — Vite dev server used separately in dev)
+const distPath = path.resolve(__dirname, '..', 'client', 'dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath, { maxAge: '1d', etag: true }));
+  // SPA catch-all: all non-API routes return index.html
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
 }
 
 // Centralized error handler
@@ -78,8 +87,8 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'An internal server error occurred. Check server logs for details.' });
 });
 
-app.listen(PORT, () => {
-  console.log(`[server] listening on http://127.0.0.1:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`[server] listening on http://${HOST}:${PORT}`);
 });
 
 export default app;
