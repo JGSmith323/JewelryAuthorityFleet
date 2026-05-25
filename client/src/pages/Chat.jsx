@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send, Sparkles, Trash2, User, RotateCcw } from 'lucide-react';
+import { Send, Sparkles, User, RotateCcw, AlertCircle } from 'lucide-react';
 import { api } from '../lib/api.js';
-
-const GREETING = `Hey! 👋 I'm your **Jewelry Authority AI Analyst**. I have live access to your sales data across eBay, Shopify, your website, and Salesforce.
-
-Ask me anything — top sellers, platform comparisons, low inventory alerts, revenue trends, customer insights — I've got you covered.`;
+import { useDemo } from '../context/DemoContext.jsx';
 
 const SAMPLE_PROMPTS = [
   'What were my top selling items last month?',
@@ -22,21 +19,46 @@ function getSessionId() {
   return id;
 }
 
-export default function Chat() {
-  const [sessionId]             = useState(() => getSessionId());
-  const [messages, setMessages] = useState([{ role: 'assistant', content: GREETING }]);
-  const [input, setInput]       = useState('');
-  const [sending, setSending]   = useState(false);
-  const scrollRef               = useRef(null);
+function buildGreeting(demoEnabled) {
+  return demoEnabled
+    ? `Hey! 👋 I'm your **Jewelry Authority AI Analyst** — running on **demo data** right now.\n\nI can see your sample catalog across eBay, Shopify, your website, and Salesforce. Ask me anything about the demo figures — revenue, top sellers, low stock, platform comparisons.`
+    : `Hey! 👋 I'm your **Jewelry Authority AI Analyst**.\n\nConnect your platforms and I'll give you live insights across eBay, Shopify, your website, and Salesforce. Or enable **Demo Mode** to explore with sample data.`;
+}
 
-  // Restore history on load (skip if only the local greeting exists)
+export default function Chat() {
+  const { enabled: demoEnabled, tick } = useDemo();
+  const [sessionId, setSessionId]  = useState(() => getSessionId());
+  const [messages, setMessages]    = useState(() => [{ role: 'assistant', content: buildGreeting(false) }]);
+  const [input, setInput]          = useState('');
+  const [sending, setSending]      = useState(false);
+  const [error, setError]          = useState(null);
+  const scrollRef                  = useRef(null);
+  const prevTickRef                = useRef(tick);
+
+  // Update greeting when demo mode changes
   useEffect(() => {
+    if (tick !== prevTickRef.current) {
+      prevTickRef.current = tick;
+      // Only reset if there's no real conversation (just the greeting)
+      setMessages(prev => {
+        const hasRealConvo = prev.some(m => m.role === 'user');
+        if (hasRealConvo) return prev;
+        return [{ role: 'assistant', content: buildGreeting(demoEnabled) }];
+      });
+    }
+  }, [tick, demoEnabled]);
+
+  // Restore history on load
+  useEffect(() => {
+    const active = { current: true };
     api.chatHistory(sessionId).then((r) => {
+      if (!active.current) return;
       if (r.messages?.length > 0) setMessages(r.messages);
     }).catch(() => {});
+    return () => { active.current = false; };
   }, [sessionId]);
 
-  // Auto-scroll on new messages
+  // Auto-scroll
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, sending]);
@@ -45,10 +67,11 @@ export default function Chat() {
     const value = (text ?? input).trim();
     if (!value || sending) return;
     setInput('');
+    setError(null);
 
-    // Exclude the local greeting from what we send — it's display-only, not real history
-    const history = messages.filter(m => m.content !== GREETING);
-    const next = [...history, { role: 'user', content: value }];
+    // Filter out the local greeting — it's display-only, not stored history
+    const history = messages.filter(m => !m.content?.startsWith('Hey! 👋'));
+    const next    = [...history, { role: 'user', content: value }];
     setMessages(next);
     setSending(true);
 
@@ -57,25 +80,29 @@ export default function Chat() {
       setMessages(m => [...m, res.message]);
     } catch (err) {
       const code = err?.body?.code;
-      setMessages(m => [...m, {
-        role: 'assistant',
-        content: code === 'CLI_UNAVAILABLE'
-          ? '⚠️ Claude Code CLI is not running. Open a terminal, run `claude`, authenticate, then restart the server.'
-          : `Something went wrong: ${err.message}`,
-      }]);
+      if (code === 'CLI_UNAVAILABLE') {
+        setError('Claude Code CLI is not running. Open a terminal, run `claude` to authenticate, then restart the server.');
+      } else {
+        setError(`Request failed: ${err.message || 'unknown error'}. Try again.`);
+      }
+      // Put the user message back in input so they can retry
+      setInput(value);
+      setMessages(prev => prev.filter(m => m !== next[next.length - 1]));
     } finally {
       setSending(false);
     }
   }
 
   async function clearChat() {
-    try {
-      await api.chatClear(sessionId);
-    } catch { /* server error — still clear locally */ }
-    setMessages([{ role: 'assistant', content: GREETING }]);
+    const newId = `s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    localStorage.setItem('ja_chat_session', newId);
+    try { await api.chatClear(sessionId); } catch { /* ok */ }
+    setSessionId(newId);
+    setMessages([{ role: 'assistant', content: buildGreeting(demoEnabled) }]);
+    setError(null);
   }
 
-  const showPrompts = messages.length <= 1;
+  const showPrompts = !messages.some(m => m.role === 'user') && !sending;
 
   return (
     <div className="h-[calc(100vh-9rem)] flex flex-col">
@@ -86,9 +113,16 @@ export default function Chat() {
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
             <Sparkles className="text-gold-500" size={22} />
             AI Analyst
+            {demoEnabled && (
+              <span className="text-xs font-medium bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200">
+                Demo Data
+              </span>
+            )}
           </h1>
           <p className="text-sm text-slate-500">
-            Powered by Claude Code CLI · Ask anything about your business data
+            {demoEnabled
+              ? 'Answering from demo sample data · Powered by Claude Code CLI'
+              : 'Powered by Claude Code CLI · Connect platforms for live insights'}
           </p>
         </div>
         <button onClick={clearChat} className="btn-ghost text-xs">
@@ -96,14 +130,22 @@ export default function Chat() {
         </button>
       </div>
 
-      {/* Message area */}
+      {/* Error banner */}
+      {error && (
+        <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-3 text-sm text-red-700">
+          <AlertCircle size={16} className="shrink-0 mt-0.5" />
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="ml-auto text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
+
+      {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-4 pr-1">
 
         {messages.map((m, i) => (
           <Bubble key={i} role={m.role} content={m.content} />
         ))}
 
-        {/* Typing indicator */}
         {sending && (
           <div className="flex items-end gap-2">
             <Avatar />
@@ -113,9 +155,8 @@ export default function Chat() {
           </div>
         )}
 
-        {/* Sample prompts — only shown before first user message */}
-        {showPrompts && !sending && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
+        {showPrompts && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
             {SAMPLE_PROMPTS.map((p) => (
               <button
                 key={p}
@@ -130,14 +171,14 @@ export default function Chat() {
 
       </div>
 
-      {/* Input bar */}
+      {/* Input */}
       <form
         className="mt-3 flex items-center gap-2"
         onSubmit={(e) => { e.preventDefault(); send(); }}
       >
         <input
           className="flex-1 px-4 py-3 rounded-xl border border-slate-200 bg-white text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-gold-400 focus:border-transparent placeholder:text-slate-400"
-          placeholder="Ask about sales, inventory, platforms…"
+          placeholder={demoEnabled ? 'Ask about demo data — top sellers, revenue, inventory…' : 'Ask about your sales, inventory, platforms…'}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={sending}
@@ -156,14 +197,10 @@ export default function Chat() {
   );
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
-
 function Avatar({ user }) {
   return (
     <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-sm ${
-      user
-        ? 'bg-slate-700 text-white'
-        : 'bg-gradient-to-br from-violet-600 to-amber-500 text-white'
+      user ? 'bg-slate-700 text-white' : 'bg-gradient-to-br from-violet-600 to-amber-500 text-white'
     }`}>
       {user ? <User size={14} /> : <Sparkles size={13} />}
     </div>
@@ -173,15 +210,15 @@ function Avatar({ user }) {
 function Bubble({ role, content }) {
   const isUser = role === 'user';
 
-  // Render very basic markdown: **bold** and newlines
   function renderContent(text) {
-    return text.split('\n').map((line, i) => {
-      const parts = line.split(/(\*\*[^*]+\*\*)/g).map((part, j) =>
-        part.startsWith('**') && part.endsWith('**')
-          ? <strong key={j}>{part.slice(2, -2)}</strong>
-          : part
+    if (typeof text !== 'string') return text;
+    return text.split('\n').map((line, i, arr) => {
+      const parts = line.split(/(\*\*[^*]+\*\*)/g).map((p, j) =>
+        p.startsWith('**') && p.endsWith('**')
+          ? <strong key={j}>{p.slice(2, -2)}</strong>
+          : p
       );
-      return <span key={i}>{parts}{i < text.split('\n').length - 1 && <br />}</span>;
+      return <span key={i}>{parts}{i < arr.length - 1 && <br />}</span>;
     });
   }
 
@@ -210,11 +247,8 @@ function TypingDots() {
   return (
     <div className="flex gap-1 items-center h-4">
       {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce"
-          style={{ animationDelay: `${i * 150}ms` }}
-        />
+        <span key={i} className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce"
+          style={{ animationDelay: `${i * 150}ms` }} />
       ))}
     </div>
   );

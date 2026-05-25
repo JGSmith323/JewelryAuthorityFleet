@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getDb } from '../db/db.js';
+import { isDemoMode } from '../db/seed-demo.js';
 
 const router = Router();
 const execAsync = promisify(execFile);
@@ -91,8 +92,10 @@ function buildDataSnapshot() {
   const customerCount = db.prepare(`SELECT COUNT(*) AS count FROM customers`).get().count;
   const productCount  = db.prepare(`SELECT COUNT(*) AS count FROM products WHERE status='active'`).get().count;
 
+  const demoMode = isDemoMode();
   return {
     generated_at: new Date().toISOString(),
+    data_source: demoMode ? 'DEMO MODE — sample/fictional data for demonstration purposes' : 'LIVE production data',
     last_30_days: totals30,
     revenue_by_platform_30d: byPlatform30,
     top_products_all_time: topProducts,
@@ -106,14 +109,18 @@ function buildDataSnapshot() {
 // ── Prompt builder ────────────────────────────────────────────────────────────
 
 function buildPrompt(messages, snapshot) {
-  const system = `You are the Jewelry Authority AI Analyst, embedded in a commerce intelligence dashboard for a jewelry retailer. Answer questions about the business using the live data snapshot below.
+  const isDemo = snapshot?.data_source?.includes('DEMO');
+  const system = `You are the Jewelry Authority AI Analyst, embedded in a commerce intelligence dashboard for a jewelry retail business. Answer questions about the business using the data snapshot below.
+
+${isDemo ? '⚠️  IMPORTANT: The dashboard is currently in DEMO MODE. All figures below are fictional sample data for demonstration purposes. Mention this naturally when relevant (e.g. "In the demo data..." or "Based on the sample data...") but do not repeat it on every sentence.' : 'You are working with LIVE production data.'}
 
 Rules:
-- Be concise (2–6 sentences) unless asked for detail.
-- Always cite specific numbers from the snapshot when relevant.
-- If asked something the snapshot does not cover, say so plainly.
+- Be conversational and helpful — like a smart business analyst, not a robot.
+- Cite specific numbers from the snapshot when relevant.
+- Keep answers concise (2–5 sentences) unless asked for detail.
 - Format currency as "$12,345".
 - Refer to platforms by name: eBay, Shopify, Business Website, Salesforce.
+- If asked something the snapshot does not cover, say so plainly.
 
 Current data snapshot (JSON):
 ${JSON.stringify(snapshot, null, 2)}
