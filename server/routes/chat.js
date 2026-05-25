@@ -6,11 +6,29 @@ import { getDb } from '../db/db.js';
 const router = Router();
 const execAsync = promisify(execFile);
 
+// ── PATH augmentation ─────────────────────────────────────────────────────────
+// Node child_process does not inherit the interactive shell PATH.
+// claude is typically installed in ~/.local/bin (Linux/WSL) or /usr/local/bin (mac).
+// We prepend the most common install locations so the binary resolves correctly.
+
+const EXTRA_PATHS = [
+  `${process.env.HOME ?? '/root'}/.local/bin`,
+  '/usr/local/bin',
+  '/opt/homebrew/bin',           // macOS Apple Silicon
+  '/opt/homebrew/sbin',
+  '/usr/bin',
+].join(':');
+
+const CHILD_ENV = {
+  ...process.env,
+  PATH: `${EXTRA_PATHS}:${process.env.PATH ?? ''}`,
+};
+
 // ── CLI availability check ────────────────────────────────────────────────────
 
 async function isCliAvailable() {
   try {
-    await execAsync('claude', ['--version'], { timeout: 5_000 });
+    await execAsync('claude', ['--version'], { timeout: 5_000, env: CHILD_ENV });
     return true;
   } catch {
     return false;
@@ -116,7 +134,7 @@ function runClaudeCLI(prompt) {
   return new Promise((resolve, reject) => {
     const proc = spawn('claude', ['--print'], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
+      env: CHILD_ENV,
     });
 
     const timer = setTimeout(() => {
